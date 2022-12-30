@@ -42,7 +42,7 @@ export const electLeader = async (
     }
     const watcher = () => {
         client
-            .get_children(ELECTION_ROOT, false)
+            .w_get_children(ELECTION_ROOT, watcher)
             .then(handleChildrenUpdate)
             .catch((error) => console.log("failed to handle children update in watcher", error))
     }
