@@ -25,20 +25,21 @@ export const addElectionNode = async (client: ZooKeeperPromise, address: string)
     await client.create(`${ELECTION_ROOT}/node`, address, ZKConstants.ZOO_EPHEMERAL_SEQUENTIAL)
 }
 
-export const electLeader = async (
-    client: ZooKeeperPromise,
-    onLeaderChange: (leaderAddress: string, nodeName: string) => void
-) => {
+export type Leader = {
+    nodePath: string
+    address: string
+}
+export const electLeader = async (client: ZooKeeperPromise, onLeaderChange: (leader: Leader) => void) => {
     if (!(await client.pathExists(ELECTION_ROOT, false))) {
         throw new Error(`election root ${ELECTION_ROOT} does not exist`)
     }
 
     const handleChildrenUpdate = async (children: string[]) => {
         children.sort()
-        const nodeName = children[0]
-        const data = await client.get(`${ELECTION_ROOT}/${nodeName}`, false)
+        const nodePath = `${ELECTION_ROOT}/${children[0]}`
+        const data = await client.get(nodePath, false)
         const address = (data[1] as Buffer).toString("utf8")
-        onLeaderChange(address, nodeName)
+        onLeaderChange({ nodePath, address })
     }
     const watcher = () => {
         client
