@@ -1,7 +1,9 @@
 import express from "express"
 import { open } from "sqlite"
 import sqlite3 from "sqlite3"
-import { startAndConnect } from "./zookeeper"
+import { addElectionNode, electLeader, startAndConnect } from "./zookeeper"
+import { Server } from "http"
+import { AddressInfo } from "net"
 
 const start = async (port: number) => {
     console.log("setting up db...")
@@ -10,11 +12,7 @@ const start = async (port: number) => {
         driver: sqlite3.Database,
     })
 
-    console.log("connecting to zookeeper...")
-    const zkConnect = process.env.ZOOKEEPER_CONNECT || "localhost:2181"
-    const zookeeper = await startAndConnect(zkConnect)
-
-    console.log("configuring webserver...")
+    console.log("starting webserver...")
     const app = express()
     app.use(express.json()) // parse bodys to js objects
     app.post("/execute", (request, response) => {
@@ -62,10 +60,26 @@ const start = async (port: number) => {
                 response.json({ error: error.message })
             })
     })
-    app.listen(port)
+    const expressServer = await new Promise<Server>((resolve) => {
+        const server = app.listen(port, () => {
+            resolve(server)
+        })
+    })
+    const address = expressServer.address() as AddressInfo
+    const publicAddress = `http://${address.address}:${address.port}`
+    console.log(`webserver is listening on ${publicAddress}`)
+
+    console.log("connecting to zookeeper...")
+    const zkConnect = process.env.ZOOKEEPER_CONNECT || "localhost:2181"
+    const zookeeper = await startAndConnect(zkConnect)
+
+    console.log("adding zookeeper election node...")
+    await addElectionNode(zookeeper, publicAddress)
+
+    console.log("beginning leader election...")
+    await electLeader(zookeeper, (leaderAddress, nodeName) =>
+        console.log(`the leader is now ${nodeName} w/ addr ${leaderAddress}`)
+    )
 }
 
-const port = parseInt(process.env.PORT) || 3000
-start(port)
-    .then(() => console.log(`started, webserver listening on http://localhost:${port}`))
-    .catch((err) => console.error("failed to boot", err))
+start(parseInt(process.env.PORT) || 3000).catch((err) => console.error("failed to boot", err))
