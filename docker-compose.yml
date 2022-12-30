@@ -1,0 +1,15 @@
+version: "3.9"
+services:
+    zookeeper:
+        image: zookeeper:latest
+        restart: always
+    app:
+        depends_on:
+            - zookeeper
+        build:
+            context: .
+            dockerfile: Dockerfile
+        environment:
+            - ZOOKEEPER_CONNECT=zookeeper:2181
+        ports:
+            - 3000:3000

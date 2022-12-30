@@ -1,13 +1,20 @@
 import express from "express"
 import { open } from "sqlite"
 import sqlite3 from "sqlite3"
+import { startAndConnect } from "./zookeeper"
 
 const start = async (port: number) => {
+    console.log("setting up db...")
     const db = await open({
         filename: "wesdb.db",
         driver: sqlite3.Database,
     })
 
+    console.log("connecting to zookeeper...")
+    const zkConnect = process.env.ZOOKEEPER_CONNECT || "localhost:2181"
+    const zookeeper = await startAndConnect(zkConnect)
+
+    console.log("configuring webserver...")
     const app = express()
     app.use(express.json()) // parse bodys to js objects
     app.post("/execute", (request, response) => {
@@ -60,5 +67,5 @@ const start = async (port: number) => {
 
 const port = parseInt(process.env.PORT) || 3000
 start(port)
-    .then(() => console.log(`started, listening on http://localhost:${port}`))
+    .then(() => console.log(`started, webserver listening on http://localhost:${port}`))
     .catch((err) => console.error("failed to boot", err))
