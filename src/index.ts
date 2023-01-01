@@ -5,7 +5,7 @@ import { addElectionNode, electLeader, Leader, startAndConnect } from "./zookeep
 import { Server } from "http"
 import { AddressInfo } from "net"
 
-const start = async (port: number) => {
+const start = async (port: number, host: string) => {
     console.log("setting up db...")
     const db = await open({
         filename: "wesdb.db",
@@ -27,9 +27,16 @@ const start = async (port: number) => {
             return
         }
 
-        if (publicAddress != leader.address) {
+        const forceLocalWrite = request.body.forceLocalWrite ?? false
+        if (forceLocalWrite) {
+            console.log("local write forced for request", request)
+        }
+
+        // reroute the request to leader if we are a follower
+        if (!forceLocalWrite && publicAddress != leader.address) {
             console.log("forwarding execute request to leader", request.body)
             fetch(`${leader.address}/execute`, {
+                method: "POST",
                 headers: {
                     "Content-Type": "application/json",
                     Accept: "application/json",
@@ -44,6 +51,7 @@ const start = async (port: number) => {
                 .catch((error) => {
                     response.status(500)
                     response.json({ error: `failed to propogate write request to leader: ${error.message}` })
+                    console.error("failed execute propogation", error)
                 })
             return
         }
@@ -87,10 +95,10 @@ const start = async (port: number) => {
             })
     })
     const expressServer = await new Promise<Server>((resolve) => {
-        const server = app.listen(port, () => resolve(server))
+        const server = app.listen(port, host, () => resolve(server))
     })
     const address = expressServer.address() as AddressInfo
-    publicAddress = `http://${address.address}:${address.port}`
+    publicAddress = `http://${address.address == "::" ? "localhost" : address.address}:${address.port}`
     console.log(`webserver is listening on ${publicAddress}`)
 
     console.log("connecting to zookeeper...")
@@ -107,4 +115,6 @@ const start = async (port: number) => {
     })
 }
 
-start(parseInt(process.env.PORT) || 3000).catch((err) => console.error("failed to boot", err))
+start(parseInt(process.env.BIND_PORT) || 3000, process.env.BIND_HOST ?? "localhost").catch((err) =>
+    console.error("failed to boot", err)
+)

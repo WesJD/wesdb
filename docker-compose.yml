@@ -3,13 +3,39 @@ services:
     zookeeper:
         image: zookeeper:latest
         restart: always
-    app:
+    app0:
         depends_on:
             - zookeeper
         build:
             context: .
             dockerfile: Dockerfile
         environment:
+            - BIND_PORT=3000
+            - BIND_HOST=app0
             - ZOOKEEPER_CONNECT=zookeeper:2181
         ports:
             - 3000:3000
+    app1:
+        depends_on:
+            - zookeeper
+        build:
+            context: .
+            dockerfile: Dockerfile
+        environment:
+            - BIND_PORT=3001
+            - BIND_HOST=app1
+            - ZOOKEEPER_CONNECT=zookeeper:2181
+        ports:
+            - 3001:3001
+    app2:
+        depends_on:
+            - zookeeper
+        build:
+            context: .
+            dockerfile: Dockerfile
+        environment:
+            - BIND_PORT=3002
+            - BIND_HOST=app2
+            - ZOOKEEPER_CONNECT=zookeeper:2181
+        ports:
+            - 3002:3002
