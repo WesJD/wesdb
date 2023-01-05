@@ -1,106 +1,67 @@
 import express from "express"
-import { open } from "sqlite"
+import { Database, open } from "sqlite"
 import sqlite3 from "sqlite3"
-import { addElectionNode, electLeader, Leader, startAndConnect } from "./zookeeper"
+import { addElectionNode, electLeader, Node, startAndConnect } from "./zookeeper"
 import { Server } from "http"
 import { AddressInfo } from "net"
+import ZooKeeperPromise from "zookeeper"
+import handleExecuteRequest from "./routes/execute"
+import handleQueryRequest from "./routes/query"
+
+export type Environment = {
+    // the sqlite db
+    db: Database<sqlite3.Database, sqlite3.Statement>
+    // the address that the expresss server is served on
+    publicAddress: string
+    // the currently known leader
+    leader: Node
+    // the zookeeper client
+    zookeeper: ZooKeeperPromise
+}
 
 const start = async (port: number, host: string) => {
+    let env: Environment
+
     console.log("setting up db...")
     const db = await open({
         filename: "wesdb.db",
         driver: sqlite3.Database,
     })
 
-    // the address that the express server is served on
-    let publicAddress: string
-    // the currently known leader
-    let leader: Leader
-
-    console.log("starting webserver...")
+    console.log("configuring webserver...")
     const app = express()
     app.use(express.json()) // parse bodys to js objects
-    app.post("/execute", (request, response) => {
-        if (!("sql" in request.body)) {
-            response.status(400)
-            response.json({ error: "sql not provided" })
-            return
-        }
+    app.post("/execute", (request, response) => handleExecuteRequest(request, response, env))
+    app.post("/query", (request, response) => handleQueryRequest(request, response, env))
 
-        const forceLocalWrite = request.body.forceLocalWrite ?? false
-        if (forceLocalWrite) {
-            console.log("local write forced for request", request)
-        }
+    console.log("starting webserver...")
+    const server = await startExpress(app, port, host)
+    const publicAddress = getPublicAddress(server)
 
-        // reroute the request to leader if we are a follower
-        if (!forceLocalWrite && publicAddress != leader.address) {
-            console.log("forwarding execute request to leader", request.body)
-            fetch(`${leader.address}/execute`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Accept: "application/json",
-                },
-                body: JSON.stringify(request.body),
-            })
-                .then((leaderResponse) => Promise.all([Promise.resolve(leaderResponse), leaderResponse.json()]))
-                .then(([leaderResponse, body]) => {
-                    response.status(leaderResponse.status)
-                    response.json(body)
-                })
-                .catch((error) => {
-                    response.status(500)
-                    response.json({ error: `failed to propogate write request to leader: ${error.message}` })
-                    console.error("failed execute propogation", error)
-                })
-            return
-        }
-
-        db.exec(request.body.sql)
-            .then(() => {
-                response.status(200)
-                response.json({})
-            })
-            .catch((error) => {
-                response.status(500)
-                response.json({ error: error.message })
-            })
+    const { client: zookeeper, initialLeader } = await setupZookeeper(publicAddress, (newLeader) => {
+        env = { ...env, leader: newLeader }
+        console.log("new leader elected", newLeader)
     })
-    app.post("/query", (request, response) => {
-        if (!("sql" in request.body)) {
-            response.status(400)
-            response.json({ error: "sql not provided" })
-            return
-        }
+    env = { db, publicAddress, zookeeper, leader: initialLeader }
 
-        const sql = request.body.sql as string
-        // This is a REALLY stupid check to make sure no one does an update inside of a
-        // query. Of course, this would never be a real solution in production, but no need
-        // to overcomplicate our simple test project.
-        const lowerSql = sql.toLowerCase()
-        if (["update", "insert", "alter", "create"].some((elem) => lowerSql.includes(elem))) {
-            response.status(400)
-            response.json({ error: "an update query must be ran using execute" })
-            return
-        }
+    console.log(`started! webserver is listening @ ${publicAddress} and initial environment is`, env)
+}
 
-        db.all(sql)
-            .then((result) => {
-                response.status(200)
-                response.json({ result })
-            })
-            .catch((error) => {
-                response.status(500)
-                response.json({ error: error.message })
-            })
+const getPublicAddress = (server: Server): string => {
+    const address = server.address() as AddressInfo
+    return `http://${address.address == "::" ? "localhost" : address.address}:${address.port}`
+}
+
+const startExpress = (express: express.Express, port: number, host: string): Promise<Server> => {
+    return new Promise((resolve) => {
+        const server = express.listen(port, host, () => resolve(server))
     })
-    const expressServer = await new Promise<Server>((resolve) => {
-        const server = app.listen(port, host, () => resolve(server))
-    })
-    const address = expressServer.address() as AddressInfo
-    publicAddress = `http://${address.address == "::" ? "localhost" : address.address}:${address.port}`
-    console.log(`webserver is listening on ${publicAddress}`)
+}
 
+const setupZookeeper = async (
+    publicAddress: string,
+    onLeaderChange: (leader: Node) => void
+): Promise<{ client: ZooKeeperPromise; initialLeader: Node }> => {
     console.log("connecting to zookeeper...")
     const zkConnect = process.env.ZOOKEEPER_CONNECT || "localhost:2181"
     const zookeeper = await startAndConnect(zkConnect)
@@ -109,10 +70,9 @@ const start = async (port: number, host: string) => {
     await addElectionNode(zookeeper, publicAddress)
 
     console.log("beginning leader election...")
-    await electLeader(zookeeper, (newLeader) => {
-        leader = newLeader
-        console.log("new leader elected", newLeader)
-    })
+    const initialLeader = await electLeader(zookeeper, onLeaderChange)
+
+    return { client: zookeeper, initialLeader }
 }
 
 start(parseInt(process.env.BIND_PORT) || 3000, process.env.BIND_HOST ?? "localhost").catch((err) =>
