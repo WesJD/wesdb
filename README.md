@@ -1,6 +1,6 @@
 # wesdb
 
-wesdb is a dumb database built on [SQLite](https://www.sqlite.org/index.html) and [Apache ZooLeeper](https://zookeeper.apache.org/).
+wesdb is a dumb database built on [SQLite](https://www.sqlite.org/index.html) and [Apache ZooKeeper](https://zookeeper.apache.org/).
 It was built as an exercise to use ZooKeeper after I completed reading
 [ZooKeeper: Wait-free coordination for Internet-scale systems](https://www.usenix.org/legacy/event/atc10/tech/full_papers/Hunt.pdf).
 
